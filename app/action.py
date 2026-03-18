@@ -19,12 +19,21 @@ class Action:
     def format_url(self, path) -> str:
         return f'https://{self.host}/{path}'
 
+    def _get_csrf_token(self, url: str) -> str:
+        html = self.session.get(url, timeout=self.timeout, verify=False).text
+        match = re.search(r'<input[^>]+name="csrf_token"[^>]+value="([^"]*)"', html)
+        if not match:
+            match = re.search(r'<input[^>]+value="([^"]*)"[^>]+name="csrf_token"', html)
+        return match.group(1) if match else ''
+
     def login(self) -> dict:
         login_url = self.format_url('auth/login')
+        csrf_token = self._get_csrf_token(login_url)
         form_data = {
             'email': self.email,
             'passwd': self.passwd,
-            'code': self.code
+            'code': self.code,
+            'csrf_token': csrf_token
         }
         return self.session.post(login_url, data=form_data,
                                  timeout=self.timeout, verify=False).json()
