@@ -76,6 +76,11 @@ class Action:
 
         return ''
 
+    @staticmethod
+    def _generate_device_fingerprint(email: str) -> str:
+        raw = f'cordcloud-action:{email}'
+        return hashlib.sha256(raw.encode()).hexdigest()
+
     def login(self) -> dict:
         login_url = self.format_url('auth/login')
         page_data = self._parse_login_page(login_url)
@@ -84,7 +89,8 @@ class Action:
             'passwd': self.passwd,
             'code': self.code,
             'csrf_token': page_data['csrf_token'],
-            'altcha': page_data['altcha']
+            'altcha': page_data['altcha'],
+            'device_fingerprint': self._generate_device_fingerprint(self.email)
         }
         return self.session.post(login_url, data=form_data,
                                  timeout=self.timeout, verify=False).json()
