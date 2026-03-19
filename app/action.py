@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import json
 import re
 from typing import Tuple
 
@@ -19,21 +22,69 @@ class Action:
     def format_url(self, path) -> str:
         return f'https://{self.host}/{path}'
 
-    def _get_csrf_token(self, url: str) -> str:
+    def _parse_login_page(self, url: str) -> dict:
         html = self.session.get(url, timeout=self.timeout, verify=False).text
+        result = {'csrf_token': '', 'altcha': ''}
+
+        # 提取 csrf_token
         match = re.search(r'<input[^>]+name="csrf_token"[^>]+value="([^"]*)"', html)
         if not match:
             match = re.search(r'<input[^>]+value="([^"]*)"[^>]+name="csrf_token"', html)
-        return match.group(1) if match else ''
+        if match:
+            result['csrf_token'] = match.group(1)
+
+        # 提取 altcha challengeurl 并求解
+        match = re.search(r'challengeurl="([^"]*)"', html)
+        if match:
+            challenge_url = match.group(1)
+            if not challenge_url.startswith('http'):
+                challenge_url = self.format_url(challenge_url.lstrip('/'))
+            result['altcha'] = self._solve_altcha(challenge_url)
+
+        return result
+
+    def _solve_altcha(self, challenge_url: str) -> str:
+        resp = self.session.get(challenge_url, timeout=self.timeout, verify=False)
+        challenge_data = resp.json()
+
+        algorithm = challenge_data.get('algorithm', 'SHA-256')
+        challenge = challenge_data['challenge']
+        salt = challenge_data['salt']
+        max_number = challenge_data.get('maxnumber', 1000000)
+        signature = challenge_data.get('signature', '')
+
+        for number in range(max_number + 1):
+            hash_input = f'{salt}{number}'
+            if algorithm == 'SHA-256':
+                hash_result = hashlib.sha256(hash_input.encode()).hexdigest()
+            elif algorithm == 'SHA-384':
+                hash_result = hashlib.sha384(hash_input.encode()).hexdigest()
+            elif algorithm == 'SHA-512':
+                hash_result = hashlib.sha512(hash_input.encode()).hexdigest()
+            else:
+                hash_result = hashlib.sha256(hash_input.encode()).hexdigest()
+
+            if hash_result == challenge:
+                solution = {
+                    'algorithm': algorithm,
+                    'challenge': challenge,
+                    'number': number,
+                    'salt': salt,
+                    'signature': signature
+                }
+                return base64.b64encode(json.dumps(solution).encode()).decode()
+
+        return ''
 
     def login(self) -> dict:
         login_url = self.format_url('auth/login')
-        csrf_token = self._get_csrf_token(login_url)
+        page_data = self._parse_login_page(login_url)
         form_data = {
             'email': self.email,
             'passwd': self.passwd,
             'code': self.code,
-            'csrf_token': csrf_token
+            'csrf_token': page_data['csrf_token'],
+            'altcha': page_data['altcha']
         }
         return self.session.post(login_url, data=form_data,
                                  timeout=self.timeout, verify=False).json()
